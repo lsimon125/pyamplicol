@@ -11,14 +11,15 @@ from dataclasses import replace
 from .._internal.physics.symbols import ModelSymbolRegistry, symbols
 from . import compiler_symbolica as _sym
 from .compiler_kernels import (
+    DenseTensors,
     _as_expression,
     _canonicalize_oriented_kernel_component,
     _component_symbols,
+    _execute_dense_network,
     _function_arguments,
     _input_tensor_expression,
-    _ordered_dense_tensor_components,
     _permutation_sign,
-    _remap_kernel_symbols,
+    _renamed_kernel_text,
     _replace_expression_symbols,
     _spin_axis_labels,
     _spin_dimension,
@@ -100,11 +101,13 @@ def _fuse_contact_finals(
                 sum(
                     (
                         _replace_expression_symbols(
-                            _remap_kernel_symbols(
-                                _sym.E(member.component_expressions[index]),
-                                old_kind=member.kind,
-                                new_kind=first.kind,
-                                model_symbols=model_symbols,
+                            _sym.E(
+                                _renamed_kernel_text(
+                                    member.component_expressions[index],
+                                    old_kind=member.kind,
+                                    new_kind=first.kind,
+                                    model_symbols=model_symbols,
+                                )
                             ),
                             runtime_aliases,
                         )
@@ -149,6 +152,16 @@ def _fuse_contact_finals(
     return tuple(sorted((*passthrough, *fused), key=lambda kernel: kernel.kind))
 
 
+# Contact partial components by (model namespace, Lorentz structure, spins,
+# legs), with the kernel kind they were formed for: the network runs on
+# canonical symbols whose order does not depend on the kind
+# (``compiler_kernels._execute_dense_network``), so another kernel's
+# components are these with its input symbols renamed. Cleared beyond the
+# bound.
+_PARTIALS: dict[tuple[object, ...], tuple[int, tuple[str, ...]]] = {}
+_PARTIALS_BOUND = 1 << 14
+
+
 def _contact_partial_component_expressions(
     term: CompiledVertexTerm,
     particle_by_name: Mapping[str, CompiledParticleRecord],
@@ -159,7 +172,54 @@ def _contact_partial_component_expressions(
     kind: int,
     model_symbols: ModelSymbolRegistry,
 ) -> tuple[str, ...]:
-    library = _sym.TensorLibrary.hep_lib_atom()
+    key = (
+        model_symbols.namespace,
+        term.lorentz_expression,
+        tuple(particle_by_name[name].spin for name in term.particles),
+        left_leg,
+        right_leg,
+        tuple(open_legs),
+    )
+    found = _PARTIALS.get(key)
+    if found is not None:
+        formed, values = found
+        if formed == kind:
+            return values
+        return tuple(
+            _renamed_kernel_text(
+                value,
+                old_kind=formed,
+                new_kind=kind,
+                model_symbols=model_symbols,
+            )
+            for value in values
+        )
+    values = _formed_contact_partial_component_expressions(
+        term,
+        particle_by_name,
+        left_leg=left_leg,
+        right_leg=right_leg,
+        open_legs=open_legs,
+        kind=kind,
+        model_symbols=model_symbols,
+    )
+    if len(_PARTIALS) >= _PARTIALS_BOUND:
+        _PARTIALS.clear()
+    _PARTIALS[key] = (kind, values)
+    return values
+
+
+def _formed_contact_partial_component_expressions(
+    term: CompiledVertexTerm,
+    particle_by_name: Mapping[str, CompiledParticleRecord],
+    *,
+    left_leg: int,
+    right_leg: int,
+    open_legs: tuple[int, ...],
+    kind: int,
+    model_symbols: ModelSymbolRegistry,
+) -> tuple[str, ...]:
+    library = DenseTensors()
     expression = _sym.E(term.lorentz_expression)
     particles = tuple(particle_by_name[name] for name in term.particles)
     expression *= _input_tensor_expression(
@@ -289,6 +349,14 @@ def projected_contact_partial_components(
     return direct if unchanged else projected
 
 
+# Contact final components by (model namespace, spins, auxiliary dimension,
+# legs, auxiliary side, component expansion), with the kernel kind they were
+# formed for (as ``_PARTIALS``: the network runs on canonical symbols, so
+# another kernel's components are these with its input symbols renamed).
+_FINALS: dict[tuple[object, ...], tuple[int, tuple[str, ...]]] = {}
+_FINALS_BOUND = 1 << 14
+
+
 def _contact_final_component_expressions(
     particles: Sequence[CompiledParticleRecord],
     auxiliary: CompiledParticleRecord,
@@ -301,7 +369,58 @@ def _contact_final_component_expressions(
     component_expansion: tuple[tuple[int, int] | None, ...],
     model_symbols: ModelSymbolRegistry,
 ) -> tuple[str, ...]:
-    library = _sym.TensorLibrary.hep_lib_atom()
+    key = (
+        model_symbols.namespace,
+        tuple(particle.spin for particle in particles),
+        compiled_particle_component_dimension(auxiliary),
+        tuple(open_legs),
+        remaining_leg,
+        result_leg,
+        auxiliary_on_left,
+        tuple(component_expansion),
+    )
+    found = _FINALS.get(key)
+    if found is not None:
+        formed, values = found
+        return tuple(
+            _renamed_kernel_text(
+                value,
+                old_kind=formed,
+                new_kind=kind,
+                model_symbols=model_symbols,
+            )
+            for value in values
+        )
+    values = _formed_contact_final_component_expressions(
+        particles,
+        auxiliary,
+        open_legs=open_legs,
+        remaining_leg=remaining_leg,
+        result_leg=result_leg,
+        kind=kind,
+        auxiliary_on_left=auxiliary_on_left,
+        component_expansion=component_expansion,
+        model_symbols=model_symbols,
+    )
+    if len(_FINALS) >= _FINALS_BOUND:
+        _FINALS.clear()
+    _FINALS[key] = (kind, values)
+    return values
+
+
+def _formed_contact_final_component_expressions(
+    particles: Sequence[CompiledParticleRecord],
+    auxiliary: CompiledParticleRecord,
+    *,
+    open_legs: tuple[int, ...],
+    remaining_leg: int,
+    result_leg: int,
+    kind: int,
+    auxiliary_on_left: bool,
+    component_expansion: tuple[tuple[int, int] | None, ...],
+    model_symbols: ModelSymbolRegistry,
+) -> tuple[str, ...]:
+    library = DenseTensors()
     auxiliary_side = "left" if auxiliary_on_left else "right"
     physical_side = "right" if auxiliary_on_left else "left"
     auxiliary_symbols = tuple(
@@ -355,7 +474,7 @@ def _contact_final_component_expressions(
 
 
 def _contact_auxiliary_tensor_expression(
-    library: _sym.TensorLibrary,
+    library: DenseTensors,
     *,
     kind: int,
     side: str,
@@ -376,14 +495,14 @@ def _contact_auxiliary_tensor_expression(
     slots = tuple(
         slot for leg in open_legs for slot in _spin_slots(particles[leg].spin, leg + 1)
     )
-    name = _sym.TensorName(model_symbols.kernel_tensor_name(kind, side))
-    library.register(_sym.Tensor.dense(name(*representations), components))
-    return name(*slots).to_expression()
+    name = model_symbols.kernel_tensor_name(kind, side)
+    library.register_dense(name, representations, components)
+    return _sym.TensorName(name)(*slots).to_expression()
 
 
 def _execute_dense_tensor(
     expression: _sym.Expression,
-    library: _sym.TensorLibrary,
+    library: DenseTensors,
     *,
     axis_labels: Sequence[str],
 ) -> tuple[object, ...]:
@@ -393,12 +512,7 @@ def _execute_dense_tensor(
         # A rank-zero expression with no function indeterminates contains no
         # tensor heads to contract. Spenso need not construct a tensor network.
         return (expression,)
-    network = _sym.TensorNetwork(
-        _sym.as_tensor(expression) if axis_labels else expression, library
-    )
-    network.execute(library=library)
-    result = network.result_tensor(library)
-    return _ordered_dense_tensor_components(result, axis_labels).values
+    return _execute_dense_network(expression, library, axis_labels).values
 
 
 def _contact_auxiliary_color(

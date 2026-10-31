@@ -59,21 +59,6 @@ def _producer_predicate(mode: str):
     return predicate
 
 
-def real_scalar_part(value: Any) -> Any:
-    """Keep an explicit real projection in saved, carrier-generic evaluators.
-
-    Use only at a boundary whose observable is known to be real. Replacing
-    this by an algebraic conjugate sum can leave imaginary rounding residues
-    after evaluator reassociation. Native execution rebinds this existing
-    scalar primitive separately for double, DoubleFloat and arbitrary precision.
-    """
-
-    return symbols.qualified(
-        "pyamplicol_scalar_v1::real_part",
-        eval={"complex": _producer_predicate("real_part")},
-    )(value)
-
-
 class ScalarFunctionLibrary:
     """A source-bound helper library; raw registry order never chooses a helper."""
 
@@ -81,6 +66,9 @@ class ScalarFunctionLibrary:
         from symbolica import E, FunctionDefinition
 
         self.raw = raw
+        # Lowered sources without local bindings, by (source, closed): a pure
+        # function of the source and this library (``lower``).
+        self._lowered: dict[tuple[str, bool], ScalarExpression] = {}
         self.zero, self.one, self.imaginary = E("0"), E("1"), E("1i")
         self.choose = symbols.qualified("symbolica::if")
         self.predicates = {
@@ -96,6 +84,10 @@ class ScalarFunctionLibrary:
                 "real_part",
                 "imaginary_part",
             )
+        }
+        self._choose_name = self.choose.get_name()
+        self._predicate_heads = {
+            symbol.get_name(): name for name, symbol in self.predicates.items()
         }
         records = raw.collections["functions"]
         bindings = dict(raw.metadata.get("function_bindings", {}))
@@ -116,6 +108,9 @@ class ScalarFunctionLibrary:
             record = records[record_id]
             fields = record["fields"]
             if not fields.get("expression_source", {}).get("exact", False):
+                from pyamplicol.models.source_refusals import refuse_value_writes
+
+                refuse_value_writes(raw.name, fields["expression_source"])
                 raise ValueError(f"source helper {name!r} lacks a certified body")
             arguments = fields["arguments"]
             if isinstance(arguments, str):
@@ -203,6 +198,45 @@ class ScalarFunctionLibrary:
         self.helper_bodies = MappingProxyType(bodies)
         self.helpers = MappingProxyType(self.helpers)
 
+    def decided_number(self, expression: Any) -> Fraction | None:
+        """The exact real value of ``expression`` when it is decided where it
+        is formed: an exact rational number, or this library's predicates
+        (``truth``, ``equal``, ``less``, ``less_equal``) and conditionals
+        (``symbolica::if``) of such values; else None (e.g. a model symbol,
+        a complex or floating-point number)."""
+
+        from symbolica import AtomType
+
+        kind = expression.get_type()
+        if kind == AtomType.Num:
+            try:
+                return Fraction(expression.to_canonical_string())
+            except (ValueError, ZeroDivisionError):
+                return None
+        if kind != AtomType.Fn:
+            return None
+        name, arguments = expression.get_name(), list(expression)
+        if name == self._choose_name and len(arguments) == 3:
+            condition = self.decided_number(arguments[0])
+            if condition is None:
+                return None
+            return self.decided_number(arguments[1 if condition != 0 else 2])
+        head = self._predicate_heads.get(name)
+        if head is None:
+            return None
+        numbers = [self.decided_number(argument) for argument in arguments]
+        if any(number is None for number in numbers):
+            return None
+        if head == "truth" and len(numbers) == 1:
+            return Fraction(int(numbers[0] != 0))
+        if head not in ("equal", "less", "less_equal") or len(numbers) != 2:
+            return None
+        left, right = numbers
+        decision = {"equal": left == right, "less": left < right}.get(
+            head, left <= right
+        )
+        return Fraction(int(decision))
+
     def inline(self, expression: Any, where: Any) -> Any:
         """Replace every helper call (value or diagnostic) whose arguments
         satisfy ``where(arguments)`` by its exact lowered body, recursively.
@@ -251,7 +285,24 @@ class ScalarFunctionLibrary:
     def lower(
         self, source: str, *, locals: dict[str, Any] | None = None, closed: bool = False
     ) -> ScalarExpression:
-        """Lower supported scalar syntax, retaining Python and/or return values."""
+        """Lower supported scalar syntax, retaining Python and/or return values.
+
+        Without ``locals`` the result is a pure function of ``source``: it is
+        formed once per library (e.g. the dependency scan of every source
+        declaration by ``prepare_scalar_bindings`` and the counterterm
+        lowering's reads of the same sources)."""
+
+        if locals is not None:
+            return self._lower(source, locals=locals, closed=closed)
+        key = (source, closed)
+        found = self._lowered.get(key)
+        if found is None:
+            found = self._lowered[key] = self._lower(source, closed=closed)
+        return found
+
+    def _lower(
+        self, source: str, *, locals: dict[str, Any] | None = None, closed: bool = False
+    ) -> ScalarExpression:
         from symbolica import E
 
         lines = source.splitlines()
@@ -331,6 +382,15 @@ class ScalarFunctionLibrary:
                     )
             if isinstance(node, ast.IfExp):
                 condition, diagnostic = truth(lower(node.test))
+                decided = self.decided_number(condition)
+                if decided is not None:
+                    # Python's conditional is lazy: a condition the bindings
+                    # (fixed parameters) decide forms its taken branch only,
+                    # so a singularity of the other branch at the fixed
+                    # values (the 1/MB^2 of ``0 if MB == 0 else ...`` at
+                    # MB = 0) never forms an infinite coefficient.
+                    taken = lower(node.body if decided != 0 else node.orelse)
+                    return ScalarExpression(taken.value, diagnostic + taken.diagnostic)
                 yes, no = lower(node.body), lower(node.orelse)
                 return ScalarExpression(
                     self.choose(condition, yes.value, no.value),

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: 0BSD
 #ifndef RUSTICOL_VIRTUAL_HPP
 #define RUSTICOL_VIRTUAL_HPP
+// The shared library's glibc floor (2.38) and the opt-in compile-time check
+// RUSTICOL_VIRTUAL_SHARED are described in rusticol_virtual.h.
 #include "rusticol_virtual.h"
 #include <cstdint>
 #include <complex>
@@ -12,14 +14,21 @@
 #include <vector>
 
 namespace rusticol {
+// status(): the C function status (rusticol_virtual_function_status), e.g.
+// RUSTICOL_VIRTUAL_INVALID_ARGUMENT for a refused model parameter update.
 class VirtualError : public std::runtime_error {
 public:
-    explicit VirtualError(const std::string &message) : std::runtime_error(message) {}
+    explicit VirtualError(const std::string &message,
+                          int status = RUSTICOL_VIRTUAL_RUNTIME_ERROR)
+        : std::runtime_error(message), status_(status) {}
+    int status() const noexcept { return status_; }
+private:
+    int status_;
 };
 namespace virtual_detail {
 inline void check(int status) {
     if (status != RUSTICOL_VIRTUAL_OK)
-        throw VirtualError(rusticol_virtual_last_error_message());
+        throw VirtualError(rusticol_virtual_last_error_message(), status);
 }
 inline const char *optional_string(const std::optional<std::string> &value) {
     return value ? value->c_str() : nullptr;
@@ -211,6 +220,11 @@ public:
         rusticol_virtual_correlated_result *p = nullptr;
         virtual_detail::check(rusticol_virtual_evaluate_correlated(handle_.get(), &request, &p));
         return CorrelatedVirtualEvaluation(p);
+    }
+    // "all" (default), or for plan v4 "none" (finite part, poles quiet NaNs),
+    // "uv" (the bare loop's UV poles) or "ir" (the renormalised IR poles).
+    void set_poles(const std::string &poles) {
+        virtual_detail::check(rusticol_virtual_set_poles(handle_.get(), poles.c_str()));
     }
     std::uint64_t update_parameters(const std::string &exact_json) {
         std::uint64_t revision = 0;
