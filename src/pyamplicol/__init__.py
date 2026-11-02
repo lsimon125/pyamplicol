@@ -114,6 +114,7 @@ if TYPE_CHECKING:
         load,
     )
     from .api.virtual_results import (
+        GradedVirtualEvaluation,
         LaurentCoefficients,
         ResolvedVirtualEvaluation,
         VirtualArithmeticSpec,
@@ -184,6 +185,7 @@ __all__ = [
     "GenerationResult",
     "Generator",
     "GradedCorrelatedEvaluation",
+    "GradedVirtualEvaluation",
     "HelicityConfiguration",
     "LaurentCoefficients",
     "LoopConfig",
@@ -292,6 +294,7 @@ _CONFIG_EXPORTS = (
     "RunConfig",
 )
 _VIRTUAL_RESULT_EXPORTS = (
+    "GradedVirtualEvaluation",
     "LaurentCoefficients",
     "ResolvedVirtualEvaluation",
     "VirtualEvaluation",
