@@ -143,6 +143,11 @@ Resolution = Literal["helicity", "colour", "helicity-colour"]
 ComplexPair = tuple[Decimal, Decimal]
 # Kind of the resolved colour components (design §1.6, decision 3).
 BORN_BASIS_COMPONENTS = "born-basis-anchored-interference"
+# The component kind of resolved outputs of graded colour: one per N_c
+# degree (``ObservableSlice.evaluate_resolved_graded``).
+NC_DEGREE_COMPONENTS = "nc-degree"
+# The first entry of the key of an output of graded colour (``graded_key``).
+GRADED = "nc-degree"
 INCLUSIVE = "born"
 # A history of one gluon emission on each side, off two different legs with
 # the same emitted gluon (a dipole T_i.T_j), whose swapped seed table equals
@@ -158,17 +163,34 @@ SELF_ADJOINT_HISTORIES = True
 @dataclass(frozen=True)
 class Column:
     """One observable output: a directed history (``None``: the Born colour
-    metric), the Born helicity rows it keeps (``None``: all) and the Born
-    colour-basis elements of its bra (``None``: all)."""
+    metric), the Born helicity rows it keeps (``None``: all), the Born
+    colour-basis elements of its bra (``None``: all) and, for graded colour
+    (``SliceRequest.graded``), the one N_c degree it reports (``exact``,
+    ``None``: every degree the projection keeps). An exact column keeps that
+    power of its Born, seeds, counterterm and field interferences alike
+    (``colour.kept``), so the columns of every degree sum to the column
+    without one."""
 
     key: Hashable
     history: ColorCorrelator | None = None
     rows: frozenset[rx.Row] | None = None
     basis: frozenset[int] | None = None
+    exact: int | None = None
 
     @property
     def directed(self) -> bool:
         return self.history is not None and bool(self.history.bra)
+
+
+def graded_key(key: Hashable, degree: int) -> tuple[str, Hashable, int]:
+    """The key of an output of graded colour: (``GRADED``, the key of the
+    output it splits, its N_c degree)."""
+
+    return (GRADED, key, int(degree))
+
+
+def is_graded_key(key: Hashable) -> bool:
+    return isinstance(key, tuple) and len(key) == 3 and key[0] == GRADED
 
 
 def connect(
@@ -573,6 +595,7 @@ class ColumnSeeds:
                         skip=None
                         if keep is None
                         else lambda c, b, keep=keep: b not in keep,
+                        exact=column.exact,
                     )
                 )
             self._rows[row] = values
@@ -1039,6 +1062,140 @@ class ObservableSlice:
         )
         return {column.key: results[column.key] for column in columns}
 
+    def evaluate_graded(
+        self,
+        point: Sequence[Sequence[Any]],
+        scale_squared: Any,
+        *,
+        correlations: Sequence[str] = (INCLUSIVE,),
+        spin: Mapping[int, Any] | None = None,
+        parameters: Mapping[str, str] | None = None,
+        precision: Precision | None = None,
+        poles: PoleSelection | str = PoleSelection.ALL,
+        stability: StabilityChecks | None = None,
+    ) -> dict[tuple[str, int], PointResult]:
+        """Graded colour (``SliceRequest.graded``): the outputs of
+        ``evaluate`` split by power of N_c, one ``PointResult`` per (history
+        id, N_c degree d) of that output (``graded_degrees``), each the
+        contribution c_d 3^d of its degree; the degrees of an output sum to
+        its ``evaluate`` value. One seed column per degree (design §7.4)."""
+
+        columns = self.graded_columns(correlations)
+        results = self._run(
+            columns,
+            point,
+            scale_squared,
+            parameters,
+            precision,
+            poles,
+            spin,
+            None,
+            stability,
+        )
+        return {
+            (column.key[1], column.key[2]): results[column.key] for column in columns
+        }
+
+    def graded(self, columns: Iterable[Column]) -> list[Column]:
+        """Each column split by power of N_c (graded colour): one column per
+        N_c degree of its output (``graded_degrees`` of its history), keyed
+        ``graded_key(column.key, d)``, with the column's history, rows and
+        basis elements."""
+
+        if not self.slice.request.graded:
+            raise ValueError("graded outputs need a request with graded colour")
+        return [
+            replace(column, key=graded_key(column.key, degree), exact=degree)
+            for column in columns
+            for degree in self.graded_degrees(column.history)
+        ]
+
+    def graded_columns(
+        self, correlations: Sequence[str] = (INCLUSIVE,)
+    ) -> list[Column]:
+        """One column per (history, N_c degree of its output)
+        (``evaluate_graded``; the stored ``graded`` set over every history)."""
+
+        return self.graded(
+            Column(identifier, self.history(identifier)) for identifier in correlations
+        )
+
+    def graded_resolved_columns(
+        self, spin: Mapping[int, Any] | None = None
+    ) -> list[Column]:
+        """One column per (Born helicity row, N_c degree of the virtual)
+        (``evaluate_resolved_graded``; the stored ``graded-resolved`` set): the
+        degrees are the colour axis of the helicity-resolved graded virtual,
+        as for graded trees."""
+
+        return self.graded(self.resolved_columns("helicity", spin))
+
+    def evaluate_resolved_graded(
+        self,
+        point: Sequence[Sequence[Any]],
+        scale_squared: Any,
+        *,
+        spin: Mapping[int, Any] | None = None,
+        parameters: Mapping[str, str] | None = None,
+        precision: Precision | None = None,
+        poles: PoleSelection | str = PoleSelection.ALL,
+        stability: StabilityChecks | None = None,
+    ) -> ResolvedObservables:
+        """Graded colour per Born helicity row: one ``PointResult`` per
+        (helicity row, N_c degree) (``ResolvedObservables`` of component kind
+        ``NC_DEGREE_COMPONENTS``); ``total()`` is the inclusive virtual."""
+
+        columns = self.graded_resolved_columns(spin)
+        results = self._run(
+            columns,
+            point,
+            scale_squared,
+            parameters,
+            precision,
+            poles,
+            spin,
+            None,
+            stability,
+        )
+        return self.resolved_result(columns, results, precision)
+
+    def degree_axis(self) -> tuple[int, ...]:
+        """Graded colour: the degrees of the helicity-resolved virtual
+        (``LoopSlice.degree_axis``)."""
+
+        return self.slice.degree_axis()
+
+    def graded_degrees(self, history: ColorCorrelator | None) -> tuple[int, ...]:
+        """Graded colour: the N_c degrees one output reports, decreasing: the
+        slice's ``degree_axis`` for the Born colour metric; for a directed
+        history its own structural powers in both directions, kept at its
+        complete family's degrees P (``degrees``)."""
+
+        slice_ = self.slice
+        if history is None or not history.bra:
+            return slice_.degree_axis()
+        directed = self.directed(history)
+        degrees = self.degrees(history) if slice_.request.accuracy != "full" else None
+
+        def swapped(left, right):
+            return directed.overlap(left, right, swapped=True)
+
+        found: set[int] = set()
+        for overlaps, table in (
+            (directed.overlap, directed.table),
+            (swapped, directed.swapped),
+        ):
+            graded = slice_.graded_degrees(
+                overlaps=overlaps, table=table, degrees=degrees
+            )
+            found |= {
+                d
+                for part in graded.values()
+                for values in part.values()
+                for d in values
+            }
+        return tuple(sorted(found, reverse=True))
+
     def evaluate_resolved(
         self,
         point: Sequence[Sequence[Any]],
@@ -1184,13 +1341,26 @@ class ObservableSlice:
         results: Mapping[Hashable, PointResult],
         precision: Precision | None = None,
     ) -> ResolvedObservables:
-        rows = tuple(dict.fromkeys(column.key[0] for column in columns))
-        components = tuple(dict.fromkeys(column.key[1] for column in columns))
+        """The resolved outputs of ``columns``: per (helicity row, Born
+        basis element), or per (helicity row, N_c degree) for the columns of
+        graded colour (``graded_resolved_columns``)."""
+
+        graded = bool(columns) and is_graded_key(columns[0].key)
+
+        def entry(column: Column) -> tuple:
+            if graded:
+                (row, _b), degree = column.key[1], column.key[2]
+                return (row, degree)
+            return column.key
+
+        rows = tuple(dict.fromkeys(entry(column)[0] for column in columns))
+        components = tuple(dict.fromkeys(entry(column)[1] for column in columns))
         precision = precision or Precision.double()
         return ResolvedObservables(
-            {column.key: results[column.key] for column in columns},
+            {entry(column): results[column.key] for column in columns},
             None if rows == (None,) else rows,
             None if components == (None,) else components,
+            component_kind=NC_DEGREE_COMPONENTS if graded else BORN_BASIS_COMPONENTS,
             digits=None
             if precision.arithmetic == "double"
             else precision.working_digits,
@@ -1480,6 +1650,7 @@ class ColumnPlan:
                             degrees.get(sector),
                             column.rows,
                             column.basis,
+                            column.exact,
                         )
                     )
                 self.lanes[column.key, sector] = (indices[0], indices[1])
@@ -1512,7 +1683,7 @@ class ColumnPlan:
             self.slice.class_of,
             evaluation.amplitudes,
             evaluation.numbers,
-            self.slice.request.accuracy,
+            self.slice.request.projection,
         )
 
     def results(self, evaluation) -> dict[Hashable, PointResult]:
@@ -1841,7 +2012,7 @@ class _Assembly:
 
         slice_, numbers = self.slice, self.numbers
         evaluation = self.evaluation
-        accuracy = slice_.request.accuracy
+        accuracy = slice_.request.projection
         degrees = (
             self.observables.degrees(column.history) if accuracy != "full" else None
         )
@@ -1861,7 +2032,16 @@ class _Assembly:
                 return directed.overlap(left, right, swapped=True)
 
         def interfere(bra, ket, degree, overlap, grade=0):
-            return _interfere(bra, ket, degree, accuracy, overlap, numbers, grade)
+            return _interfere(
+                bra,
+                ket,
+                degree,
+                accuracy,
+                overlap,
+                numbers,
+                grade,
+                exact=column.exact,
+            )
 
         def degree_of(kind, sector):
             return None if degrees is None else degrees[kind][sector]
@@ -2049,6 +2229,32 @@ class NativeObservables:
             member=member,
             **options,
         )
+
+    @classmethod
+    def graded(
+        cls,
+        observables: ObservableSlice,
+        correlations: Sequence[str] | None = None,
+        *,
+        spin_legs: Iterable[int] = (),
+        member: FlavourMember | None = None,
+        **options,
+    ) -> NativeObservables:
+        """Graded colour: the colour-history outputs ``correlations`` (an
+        admitted ``member``'s on the representative's labels) per N_c degree,
+        or with ``correlations`` None the helicity-resolved virtual per N_c
+        degree (``ObservableSlice.graded``)."""
+
+        if correlations is None:
+            sources = dict.fromkeys(spin_legs)
+            if member is not None:
+                sources = member.spin(sources)
+            columns = observables.resolved_columns("helicity", sources)
+        elif member is None:
+            columns = [Column(name, observables.history(name)) for name in correlations]
+        else:
+            columns = member.columns(observables, correlations)
+        return cls(observables, observables.graded(columns), member=member, **options)
 
     def evaluate(
         self,

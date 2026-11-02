@@ -442,7 +442,7 @@ def project_records(
     from .refusals import require_formal_nc_tables
 
     seeds = list(seeds)
-    accuracy = slice_.request.accuracy
+    accuracy = slice_.request.projection
     born_grades = slice_._born_grades()
     distinct: dict[int, Any] = {}
     for column in columns:
@@ -473,6 +473,7 @@ def project_records(
         )
         for column in columns
     ]
+    exact = [column.exact for column in columns]
     try:
         class_json, records_json, components = _native().project_records(
             raw_tables,
@@ -485,6 +486,7 @@ def project_records(
                 for combination, order in seeds
             ],
             threads,
+            exact if any(d is not None for d in exact) else None,
         )
     except ValueError as error:
         text = str(error)
