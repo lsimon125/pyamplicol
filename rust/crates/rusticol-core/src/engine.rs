@@ -2432,6 +2432,10 @@ where
     /// gives a 53-bit `Float`, and a `Float` product is rounded to the smaller precision of its
     /// factors, so every result would carry only binary64 accuracy.
     fn from_f64_constant(value: f64, binary_precision: Option<u32>) -> Self;
+
+    /// A value computed in a wider `Float` (an exact constant or a derived model parameter),
+    /// rounded to the working precision (106 bits for `DoubleFloat`).
+    fn from_float(value: &Float, binary_precision: Option<u32>) -> Self;
 }
 
 #[cfg(feature = "symbolica-runtime")]
@@ -2459,6 +2463,10 @@ impl RusticolHighPrecisionNumber for DoubleFloat {
 
     fn from_f64_constant(value: f64, _binary_precision: Option<u32>) -> Self {
         DoubleFloat::from(value)
+    }
+
+    fn from_float(value: &Float, _binary_precision: Option<u32>) -> Self {
+        value.to_double_float()
     }
 }
 
@@ -2509,6 +2517,14 @@ impl RusticolHighPrecisionNumber for Float {
             Some(precision) => Float::with_val(precision, value),
             None => Float::from(value),
         }
+    }
+
+    fn from_float(value: &Float, binary_precision: Option<u32>) -> Self {
+        let mut value = value.clone();
+        if let Some(precision) = binary_precision {
+            value.set_prec(precision);
+        }
+        value
     }
 }
 
@@ -4593,6 +4609,11 @@ struct ModelParameterEvaluatorRuntime {
     input_parameter_indices: Vec<usize>,
     outputs: Vec<GenericDerivedParameterOutputManifest>,
     evaluator: EvaluatorGroup,
+    /// The outputs' exact definitions for the double-double and
+    /// arbitrary-precision paths, attached on first use
+    /// (`NativeRuntime::ensure_exact_model_parameters`).
+    #[cfg(feature = "symbolica-runtime")]
+    exact: Option<Arc<ExactModelParameterDerivation>>,
 }
 
 struct StageRuntime {
@@ -4902,7 +4923,9 @@ use validation::*;
 mod correlated;
 mod native_runtime;
 pub use correlated::{
-    NativeCorrelatedEvaluation, NativeCorrelatedRequest, NativeGradedCorrelatedEvaluation,
+    NativeCorrelatedEvaluation, NativeCorrelatedRequest, NativeDecimalCorrelatedEvaluation,
+    NativeDecimalCorrelatedRequest, NativeDecimalSpinCorrelationVectors,
+    NativeGradedCorrelatedEvaluation,
     NativeSpinCorrelationVectors,
 };
 

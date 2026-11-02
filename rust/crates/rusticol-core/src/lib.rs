@@ -66,8 +66,9 @@ pub use eager_tables::{
 pub use engine::eager_direct_descriptor_for_source_application_bytes;
 pub use engine::{
     AmplitudeOrderCatalog, NativeColorComponent, NativeCorrelatedEvaluation,
-    NativeCorrelatedRequest, NativeDecimalEvaluation, NativeDecimalGradedEvaluation,
-    NativeDecimalResolvedEvaluation, NativeEagerExactAttachment, NativeEagerExactClosure,
+    NativeCorrelatedRequest, NativeDecimalCorrelatedEvaluation, NativeDecimalCorrelatedRequest,
+    NativeDecimalEvaluation, NativeDecimalGradedEvaluation, NativeDecimalResolvedEvaluation,
+    NativeDecimalSpinCorrelationVectors, NativeEagerExactAttachment, NativeEagerExactClosure,
     NativeEagerExactCoupling, NativeEagerExactFinalization, NativeEagerExactInvocation,
     NativeEagerExactSections, NativeEagerExactStage, NativeExternalParticle,
     NativeGradedCorrelatedEvaluation, NativeGradedEvaluation, NativeHelicityConfiguration, NativeModelParameter, NativeNcExpansion,
