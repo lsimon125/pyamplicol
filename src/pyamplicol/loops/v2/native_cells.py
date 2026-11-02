@@ -438,6 +438,7 @@ def project_records(
     Python cells); ``threads`` selects a private pool (None: the global
     one; the bytes do not depend on it)."""
 
+    from .colour import formal_label
     from .refusals import require_formal_nc_tables
 
     seeds = list(seeds)
@@ -447,7 +448,9 @@ def project_records(
     for column in columns:
         distinct.setdefault(id(column.table), column.table)
     # Projected at formal N_c only over N_c-exact blocks (``refusals``).
-    require_formal_nc_tables(accuracy, distinct.values(), "native seed records")
+    require_formal_nc_tables(
+        formal_label(accuracy), distinct.values(), "native seed records"
+    )
     orders: set[Orders] = {order for _c, order in seeds}
     orders |= {a for _b, a in born_grades} | {a for _b, a, _g in born_components}
     for table in distinct.values():
@@ -733,7 +736,7 @@ class _DegreeKeys:
 def degrees(
     slice_: Any, table_handle: Any = None, threads: int | None = None
 ) -> dict[str, dict[Orders, int | None]]:
-    """``LoopSlice.degrees()`` (the inclusive metric), with every overlap
+    """``LoopSlice.structural_degrees()`` (the inclusive metric), with every overlap
     degree and the seed-table degrees evaluated natively in one batch.
     ``table_handle`` is the slice table's ``NativeCellTable`` (default: its
     cells built natively from its classes).
@@ -1174,8 +1177,9 @@ def switched_seed_cells(
 
 
 def slice_degrees(slice_: Any) -> dict[str, dict[Orders, int | None]] | None:
-    """``LoopSlice.degrees()`` (inclusive) under the "degrees" stage, or None
-    when it is off (the switch in ``LoopSlice.degrees`` caches it)."""
+    """``LoopSlice.structural_degrees()`` (inclusive) under the "degrees"
+    stage, or None when it is off (the switch in
+    ``LoopSlice.structural_degrees`` caches it)."""
 
     if "degrees" not in NATIVE_STAGES:
         return None

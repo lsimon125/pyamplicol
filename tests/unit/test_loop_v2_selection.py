@@ -66,7 +66,7 @@ def _options() -> dict:
 
     return {
         "fixed_parameters": legacy_capture.FIXED_PARAMETERS,
-        "accuracy": "lc",
+        "accuracy": "strict-lc",
         "colour_declaration": LoopColorDeclaration.from_dict(
             json.loads(legacy_capture.COLOUR_DECLARATION.read_text())
         ),
@@ -175,14 +175,14 @@ def test_selection_records_catalogue_resolution_and_refusals():
         lc.Selection(((1, -1), (1, 1)))
     with pytest.raises(ValueError, match="at least one flow"):
         lc.Selection((), ())
-    plain = SliceRequest("u u~ > d d~ g", {"QCD": 3}, {"QCD": 5}, accuracy="lc")
+    plain = SliceRequest("u u~ > d d~ g", {"QCD": 3}, {"QCD": 5}, accuracy="strict-lc")
     assert "selection" not in request_record(plain)
     assert request_from_record(request_record(plain)) == plain
     chosen = replace(plain, selection=selection)
     record = request_record(chosen)
     assert record["selection"] == selection.record()
     assert request_from_record(json.loads(json.dumps(record))) == chosen
-    for accuracy in ("full", "nlc"):
+    for accuracy in ("full", "nlc", "lc", "strict-nlc"):
         with pytest.raises(ValueError, match="leading-colour option"):
             SliceRequest(
                 "g g > g g",
@@ -193,7 +193,9 @@ def test_selection_records_catalogue_resolution_and_refusals():
             )
         with pytest.raises(CompatibilityError, match="leading colour"):
             lc.require_leading_colour(accuracy, ["h:-1,-1,+1,+1"], None)
-    with pytest.raises(CompatibilityError, match=r"at next-to-leading colour.*without"):
+    with pytest.raises(
+        CompatibilityError, match=r"at inherited next-to-leading colour.*without"
+    ):
         lc.require_leading_colour("nlc", None, ["1"], resolved=True)
     lc.require_leading_colour("full", None, None)
     # What evaluate / evaluate_resolved do not take (the correlated ones).
@@ -473,18 +475,18 @@ def test_a_flow_below_the_leading_colour_is_zero_and_refused_at_generation(
 
 
 @pytest.mark.loop_physics
-def test_a_flow_interfering_between_born_orders_is_refused_at_generation(
+def test_a_flow_selection_between_born_orders_is_exact_at_generation(
     loop_sm_compiled_model, loop_native
 ):
-    """u u~ > d d~ with QCD and photon Born amplitudes: at QCD^2 QED^2 the
-    QCD flow (2,4,3,1) interferes at the leading power with the photon
-    Born's (2,1,3,4). Its evaluation-time selection keeps that term (the
-    flows sum to the inclusive value in double-double); a generation-time
-    selection would drop it, so it is refused (listed
-    ``interfering-colour-flows``, naming the unselected flow and the order),
+    """u u~ > d d~ with QCD and photon Born amplitudes: every squared Born
+    order is truncated at the common reference degree (as at tree level), so
+    QCD^2 QED^2, where the QCD flow (2,4,3,1) and the photon Born's (2,1,3,4)
+    interfere one power below it, has no leading-colour part (zero for each
+    flow; the flows sum to the inclusive value in double-double). The
+    generation-time selection of (2,4,3,1) is its evaluation-time selection,
     (2,1,3,4) alone is below the leading colour at QCD^4
-    (``subleading-colour-flows``), and both flows together are the
-    inclusive value."""
+    (``subleading-colour-flows``), and both flows together are the inclusive
+    value."""
 
     from pyamplicol.loops.v2.assemble import LoopSlice, SliceRequest
     from pyamplicol.loops.v2.observables import ObservableSlice
@@ -531,14 +533,14 @@ def test_a_flow_interfering_between_born_orders_is_refused_at_generation(
     ]
     born = max(abs(x) for x in expected[:3])
     _close(list(map(sum, zip(*parts, strict=True))), expected, DOUBLE_DOUBLE, born)
-    # The cross order's (QCD^2 QED^2, entry 0) Born of the QCD flow alone
-    # is nonzero (the inclusive one vanishes at the leading power).
-    cross = parts[flows.index("flow:2,4,3,1")][0]
-    assert abs(cross) > Decimal("1e-4")
-    with pytest.raises(LoopRequestUnsupported) as refused:
-        generate(lc.Selection((), ((2, 4, 3, 1),)))
-    assert refused.value.key == "interfering-colour-flows"
-    assert "flows [2, 1, 3, 4] at {'QCD': 2, 'QED': 2}" in str(refused.value)
+    # The cross order's (QCD^2 QED^2, entry 0) Born is zero for each flow.
+    assert [part[0] for part in parts] == [0, 0]
+    qcd = parts[flows.index("flow:2,4,3,1")]
+    selected = generate(lc.Selection((), ((2, 4, 3, 1),)))
+    value = coefficients(
+        _runtime(selected).evaluate(pts, mu_r2=scales, arithmetic="double-double")
+    )
+    _close(value, qcd, DOUBLE_DOUBLE, born)
     with pytest.raises(LoopRequestUnsupported) as refused:
         generate(lc.Selection((), ((2, 1, 3, 4),)))
     assert refused.value.key == "subleading-colour-flows"
@@ -769,7 +771,9 @@ def test_public_colour_subset_selectors_are_the_tree_engines(
     ):
         selection = chosen(process, **selectors)
         legs = len(process.split()) - 1
-        request = SliceRequest(process, *QCD[legs], accuracy="lc", selection=selection)
+        request = SliceRequest(
+            process, *QCD[legs], accuracy="strict-lc", selection=selection
+        )
         tree = Runtime.load(
             _tree_artifact(tmp_path / str(k), process, _toml(selectors)),
             process="t",
@@ -883,7 +887,7 @@ def test_declared_correlators_with_a_selection_are_refused(
                 model=json.dumps(str(loop_sm_colour_model)),
                 output=json.dumps(str(output)),
                 selectors=selectors,
-                accuracy="lc",
+                accuracy="strict-lc",
                 process=json.dumps(process),
             )
         )
@@ -1138,7 +1142,7 @@ def artifacts(loop_sm_colour_model, loop_native, tmp_path_factory):
     def build(
         key: str,
         selectors: str,
-        accuracy: str = "lc",
+        accuracy: str = "strict-lc",
         process: str = "u u~ > d d~ g",
     ) -> Path:
         if key not in built:
@@ -1155,7 +1159,7 @@ def artifacts(loop_sm_colour_model, loop_native, tmp_path_factory):
             )
             processes = ProcessSet((ProcessRequest.parse(process, name="p"),))
             generator = Generator(resolve_config(card))
-            if accuracy != "lc":
+            if accuracy != "strict-lc":
                 built[key] = generator.plan(processes)
             else:
                 generator.generate(processes, tmp / "artifact")
@@ -1190,10 +1194,10 @@ post_build_validation = false
 
 
 def _card(**fields: str) -> str:
-    """``_CARD`` with its fields (by default no selectors, leading colour and
-    MB = 0)."""
+    """``_CARD`` with its fields (by default no selectors, formal leading
+    colour and MB = 0)."""
 
-    defaults = {"selectors": "", "accuracy": "lc", "fixed": '{MB = "0"}'}
+    defaults = {"selectors": "", "accuracy": "strict-lc", "fixed": '{MB = "0"}'}
     return _CARD.format(**{**defaults, **fields})
 
 
@@ -1360,7 +1364,10 @@ def test_public_selectors_generate_the_selection_of_the_inclusive_artifact(artif
     with pytest.raises(GenerationError, match="subleading-colour-flows"):
         artifacts("subleading", "selected_color_sector_ids = [0]")
     blockers = artifacts("nlc", _SELECTORS, accuracy="nlc").unsupported_features
-    assert any("leading colour (color.accuracy='lc')" in item for item in blockers)
+    assert any(
+        "formal leading colour (color.accuracy='strict-lc')" in item
+        for item in blockers
+    )
 
 
 @pytest.mark.loop_physics
@@ -1387,7 +1394,7 @@ def test_the_dry_run_refuses_selected_helicities_the_process_lacks(
                 model=json.dumps(str(loop_sm_colour_model)),
                 output=json.dumps(str(tmp_path / f"artifact{k}")),
                 selectors=f"selected_source_helicities = {selector}",
-                accuracy="lc",
+                accuracy="strict-lc",
                 process=json.dumps("u u~ > d d~ g"),
             )
         )

@@ -686,8 +686,8 @@ on a newer glibc is stopped by the dynamic loader on an older one
 
 #### Leading-colour helicity and colour-flow selection
 
-At leading colour (`[color] accuracy = "lc"`) a v2 virtual offers the tree
-engine's selectors, with the tree engine's identifiers and selector
+At formal leading colour (`[color] accuracy = "strict-lc"`) a v2 virtual
+offers the tree engine's selectors, with the tree engine's identifiers and selector
 conventions (per-flow values at a cross order of several Born orders follow
 the loop's convention, below).
 At evaluation, `Runtime.evaluate(..., helicities=[...], color_flows=[...])`
@@ -739,7 +739,7 @@ generation-time selection has no such setup.
 selected_color_sector_ids = [2]
 selected_source_helicities = {"1" = -1, "5" = 1}
 [color]
-accuracy = "lc"
+accuracy = "strict-lc"
 ```
 
 The loop's leading colour is the leading N_c power of the squared matrix
@@ -749,17 +749,17 @@ selection is zero at evaluation. At generation it contributes exact zeros
 next to a leading flow (`max_color_sectors = 3` on u u~ > d d~ g keeps two
 such flows and a leading one), and a selection without a leading flow is
 refused (`subleading-colour-flows`). With several Born orders (QCD and
-electroweak Born amplitudes, e.g. u u~ > d d~ with photon exchange) a flow
-can interfere at the leading power with another flow between the two orders
-(there QCD^2 QED^2): its evaluation-time selection keeps that term, and a
-generation-time selection that would drop it is refused
-(`interfering-colour-flows`); select the interfering flows together, or
-select at evaluation. At such a cross order a flow's value is the selected
-flow interfering with the whole Born of the other order (bra the flow, ket
-every flow), not the tree engine's per-flow `evaluate_orders` value: it can
-be nonzero where the inclusive leading-colour value vanishes (u u~ > d d~
-at QCD^2 QED^2: the two flows give +-8.5e-3 and sum to 0), and complete
-sets of flows sum to the inclusive value. Identical-flavour quark lines (u u~ >
+electroweak Born amplitudes, e.g. u u~ > d d~ with photon exchange) every
+order is truncated at the same reference degree as at tree level, so a
+cross order whose terms stay below it has no leading-colour part (u u~ >
+d d~ at QCD^2 QED^2: zero for every flow). At a cross order a flow's value
+is the selected flow interfering with the whole Born of the other order
+(bra the flow, ket every flow), not the tree engine's per-flow
+`evaluate_orders` value (u u~ > u u~ at QCD^2 QED^2: each flow gives half),
+and complete sets of flows sum to the inclusive value. A generation-time
+selection that would drop a term between a selected and an unselected flow
+at the reference degree is refused (`interfering-colour-flows`, a guard);
+select those flows together, or select at evaluation. Identical-flavour quark lines (u u~ >
 u u~ g) take every selection. A member of an exact flavour group
 (`process.flavor_blind`) lists no flows and takes no evaluation-time
 selection (`CompatibilityError`): select on its representative process,
@@ -926,19 +926,25 @@ take every selection too; their `pole_parts` follow their own axes (resolved:
 per sector, helicity and colour component).
 
 A one-loop request without `color.accuracy` is full colour (MadLoop's
-accuracy); LC and NLC are opt-in. MG5_aMC's loop_sm ships with pyAmpliCol
+accuracy); the truncated accuracies are opt-in and mean what they mean for
+trees ([correlator conventions](../correlator-conventions.md), "One loop: the
+same keywords"): `strict-lc`/`strict-nlc` the formal 1/N_c expansion of the
+virtual, `lc`/`nlc` the inherited approximation (tree currents with their
+U(1)-subtraction pieces at N_c = 3; no expansion in N_c, so Catani's poles do
+not hold for it). Until this convention, the loop engine's `lc`/`nlc` were the
+formal projection: such requests now name `strict-lc`/`strict-nlc`. MG5_aMC's loop_sm ships with pyAmpliCol
 (`model.source = "loop_sm"`, with its `[loop.model]` declaration): see
 [One-loop QCD on loop_sm](loop-sm-and-madloop.md).
 
-Current v2 scope: model-supplied R2; full, NLC or LC colour (LC/NLC with the
-model's formal-N_c colour declaration, shipped for loop_sm and its
-restrictions; formal-N_c projections for any number of
-quark lines, identical flavours such as `u u~ > u u~ g` included); double,
+Current v2 scope: model-supplied R2; full colour, the strict LC/NLC and the
+inherited LC/NLC (all four with the model's formal-N_c colour declaration,
+shipped for loop_sm and its restrictions; formal-N_c projections for any
+number of quark lines, identical flavours such as `u u~ > u u~ g` included); double,
 double-double and arbitrary
 arithmetic; inclusive results per squared coupling order; colour and spin
 correlations declared at generation (`correlators`); helicity-resolved output
-(also per Born colour component at LC; one contracted component at NLC and full
-colour); exact flavour grouping (`process.flavor_blind`: an identity-port member
+(also per Born colour component at strict LC; one contracted component at every
+other accuracy); exact flavour grouping (`process.flavor_blind`: an identity-port member
 such as `s s~ > g g` of `d d~ > g g` is served by its representative). `poles`
 and `[evaluation.stability_checks]` apply to correlated and resolved evaluations
 too (resolved estimates are per helicity row and colour component).
@@ -969,10 +975,10 @@ strong coupling parameter described above (`ir_poles` is absent otherwise;
 What the engine does not admit fails at generation with a typed error that
 names the rule, for example:
 
-- leading and next-to-leading colour over tree currents that are not exact
-  in N_c (currents mixing U(1)-subtraction grades): "colour-accuracy-nc-exact:
-  ... LC needs N_c-exact tree currents ...". Leading and next-to-leading
-  colour split such currents by grade, so identical-flavour quark lines (from
+- strict leading and next-to-leading colour over tree currents that are not
+  exact in N_c (currents mixing U(1)-subtraction grades):
+  "colour-accuracy-nc-exact: ... STRICT-LC needs N_c-exact tree currents ...".
+  The strict accuracies split such currents by grade, so identical-flavour quark lines (from
   `u u~ > u u~ g` up: `u u~ > u u~ d d~`, `g g > u u~ u u~`, ...) are exact
   and generate, as distinct flavours do; the rule guards any request whose
   currents would still mix grades. The check runs right after the trees are

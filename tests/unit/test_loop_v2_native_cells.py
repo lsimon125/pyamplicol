@@ -80,24 +80,24 @@ _RUST = (
 # generic classes) and the LC prune of a slice and its companion.
 DEFAULT = {
     "gg_gg": ("g g > g g", 2, "full"),
-    "uux_gg_lc": ("u u~ > g g", 2, "lc", "sites"),
+    "uux_gg_lc": ("u u~ > g g", 2, "strict-lc", "sites"),
 }
 PHYSICS = {
-    "uux_ggg_lc": ("u u~ > g g g", 3, "lc", "sites"),
+    "uux_ggg_lc": ("u u~ > g g g", 3, "strict-lc", "sites"),
     "gg_ggg": ("g g > g g g", 3, "full"),
     "uux_ggg": ("u u~ > g g g", 3, "full"),
-    "gg_gg_lc": ("g g > g g", 2, "lc"),
-    "gg_gg_nlc": ("g g > g g", 2, "nlc"),
+    "gg_gg_lc": ("g g > g g", 2, "strict-lc"),
+    "gg_gg_nlc": ("g g > g g", 2, "strict-nlc"),
     "uux_ddxg": ("u u~ > d d~ g", 3, "full"),
-    "uux_ddxg_nlc": ("u u~ > d d~ g", 3, "nlc"),
+    "uux_ddxg_nlc": ("u u~ > d d~ g", 3, "strict-nlc"),
     "uux_uuxg": ("u u~ > u u~ g", 3, "full"),
-    "uux_ggg_nlc": ("u u~ > g g g", 3, "nlc"),
+    "uux_ggg_nlc": ("u u~ > g g g", 3, "strict-nlc"),
 }
 # Six legs with site closure (rule 6: the recursion's CT program costs
 # minutes there and enters only the counterterm keys, covered above).
 NIGHTLY = {
     "uux_gggg": ("u u~ > g g g g", 4, "full", "sites"),
-    "gg_gggg_lc": ("g g > g g g g", 4, "lc", "sites"),
+    "gg_gggg_lc": ("g g > g g g g", 4, "strict-lc", "sites"),
 }
 CONTROLS = {**DEFAULT, **PHYSICS, **NIGHTLY}
 LANES = {"native": native_cells.STAGES, "python": frozenset()}
@@ -401,7 +401,7 @@ def _switched_equal(native: Generated, oracle: Generated) -> None:
         assert snapshot.digest(snapshot.seeds_records(a.scaleless)) == (
             snapshot.digest(snapshot.seeds_records(b.scaleless))
         )
-    assert a.degrees() == python(b.degrees)
+    assert a.structural_degrees() == python(b.structural_degrees)
     _decodes(native)
     assert oracle.decoded == 0
     if a.request.accuracy == "full":
@@ -595,15 +595,15 @@ def _degrees_equal(native: Generated, oracle: Generated | None = None) -> None:
 
     slice_ = native.slice
     expected = (
-        python(oracle.slice.degrees)
+        python(oracle.slice.structural_degrees)
         if oracle is not None
-        else uncached(slice_, "degrees", slice_.degrees)
+        else uncached(slice_, "degrees", slice_.structural_degrees)
     )
     assert native_cells.degrees(slice_) == expected
     # Rule 5: one thread or several.
     assert native_cells.degrees(slice_, threads=1) == expected
     assert native_cells.degrees(slice_, threads=3) == expected
-    assert slice_.degrees() == expected
+    assert slice_.structural_degrees() == expected
     table = slice_.table
     for pairs in (pairs for _sector, pairs in slice_.sectors):
         assert native_cells.table_degree(
@@ -779,14 +779,14 @@ def test_dipole_orbits_equal_python(slices, name):
 
 # (process, Born QCD order, accuracy, histories).
 OBSERVABLES_PHYSICS = {
-    "gg_gg_lc_T12": ("g g > g g", 2, "lc", ("T12",)),
+    "gg_gg_lc_T12": ("g g > g g", 2, "strict-lc", ("T12",)),
     "uux_ggg_directed": ("u u~ > g g g", 3, "full", ("T12", "T35", "chain")),
     "ddx_gg_directed": ("d d~ > g g", 2, "full", ("T12", "T23", "casimir", "ordered")),
-    "uux_ggg_nlc_T12": ("u u~ > g g g", 3, "nlc", ("T12",)),
-    "gg_ggg_lc_T13": ("g g > g g g", 3, "lc", ("T13",)),
+    "uux_ggg_nlc_T12": ("u u~ > g g g", 3, "strict-nlc", ("T12",)),
+    "gg_ggg_lc_T13": ("g g > g g g", 3, "strict-lc", ("T13",)),
 }
 OBSERVABLES_NIGHTLY = {
-    "gg_gggg_lc_T12": ("g g > g g g g", 4, "lc", ("T12",)),
+    "gg_gggg_lc_T12": ("g g > g g g g", 4, "strict-lc", ("T12",)),
 }
 HISTORIES = {
     "T12": ColorCorrelator.dipole("T12", 1, 2),

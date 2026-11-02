@@ -27,12 +27,14 @@ own antiquark) has a vanishing leading-colour Born and virtual: its
 selection is zero at evaluation; at generation it contributes exact zeros
 next to a leading flow, and a selection without one is refused
 (``subleading-colour-flows``). Between two Born orders (QCD and electroweak
-Born amplitudes) a flow can interfere with another at the leading power
-(u u~ > d d~: the QCD flow (2,4,3,1) with the photon's (2,1,3,4) at
-QCD^2 QED^2): the evaluation-time selection keeps that term (its bra is the
-flow, its ket the whole Born); a generation-time selection restricts the
-Born itself, so one that would drop it is refused
-(``interfering-colour-flows``). The selected
+Born amplitudes) two distinct flows interfere, but below the reference
+degree, which the projection keeps for every order (u u~ > d d~: the QCD
+flow (2,4,3,1) and the photon's (2,1,3,4) at QCD^2 QED^2, one power below:
+that order has no leading-colour part). A term between a selected and an
+unselected flow at the reference degree would be kept by the evaluation-time
+selection (its bra is the flow, its ket the whole Born) and dropped by a
+generation-time selection, which restricts the Born itself: such a
+selection is refused (``interfering-colour-flows``). The selected
 output is the observable column of those rows and basis elements
 (``observables.Column``): its seeds and its Born, counterterm and field bras
 keep them only, so a complete set of selections sums to the inclusive value.
@@ -400,15 +402,16 @@ def slice_flows(slice_: Any) -> tuple[Flow, ...]:
 
 
 def request_flows(compiled: Any, request: Any, basis: Any) -> tuple[Flow, ...]:
-    """The leading-colour flows an LC request's artifact computes, in the tree
-    runtime's order, which numbers them: ``plan_flows`` of the tree engine's
-    plan of the process built with the selection's ``color_order`` and
-    ``max_sectors`` (``reference_color_order``, ``max_color_sectors``), the
-    selected flows only under a colour-flow selection (the tree runtime of
-    ``selected_color_sector_ids`` lists and numbers the flows it computes).
-    NLC and full colour have none."""
+    """The leading-colour flows a formal LC (``strict-lc``) request's artifact
+    computes, in the tree runtime's order, which numbers them: ``plan_flows``
+    of the tree engine's plan of the process built with the selection's
+    ``color_order`` and ``max_sectors`` (``reference_color_order``,
+    ``max_color_sectors``), the selected flows only under a colour-flow
+    selection (the tree runtime of ``selected_color_sector_ids`` lists and
+    numbers the flows it computes). The inherited LC, NLC and full colour
+    have none: only the formal leading colour is diagonal in the flows."""
 
-    if request.accuracy != "lc":
+    if request.accuracy != "strict-lc":
         return ()
     selection = request.selection
     plan = leading_colour_plan(
@@ -498,7 +501,12 @@ class Catalogue:
         return self.flows[ordinal - 1]
 
 
-_ACCURACY_NAMES = {"nlc": "next-to-leading", "full": "full"}
+_ACCURACY_NAMES = {
+    "lc": "inherited leading",
+    "nlc": "inherited next-to-leading",
+    "strict-nlc": "strict next-to-leading",
+    "full": "full",
+}
 
 
 def require_leading_colour(
@@ -508,11 +516,12 @@ def require_leading_colour(
     *,
     resolved: bool = False,
 ) -> None:
-    """Helicity and colour-flow selection exists at leading colour only: NLC
-    and full colour keep their API (every helicity and colour contracted;
-    ``evaluate_resolved`` without selectors per helicity)."""
+    """Helicity and colour-flow selection exists at formal leading colour
+    (``strict-lc``) only: the inherited LC, NLC and full colour keep their API
+    (every helicity and colour contracted; ``evaluate_resolved`` without
+    selectors per helicity)."""
 
-    if (helicities or color_flows) and accuracy != "lc":
+    if (helicities or color_flows) and accuracy != "strict-lc":
         instead = (
             "evaluate_resolved without selectors returns every helicity row"
             if resolved
@@ -521,8 +530,8 @@ def require_leading_colour(
         raise CompatibilityError(
             "v2 virtual runtimes evaluate every helicity and colour at "
             f"{_ACCURACY_NAMES.get(accuracy, accuracy)} colour; helicity and "
-            "colour-flow selection is available at leading colour "
-            f"(color.accuracy='lc'); {instead}"
+            "colour-flow selection is available at formal leading colour "
+            f"(color.accuracy='strict-lc'); {instead}"
         )
 
 
